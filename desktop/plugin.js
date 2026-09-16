@@ -27,6 +27,41 @@ function meterClass(remaining) {
   return 'bg-primary'
 }
 
+function money(value) {
+  return `$${value.toLocaleString('pt-BR', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`
+}
+
+function balanceFromDetails(provider) {
+  const pattern = provider.provider === 'deepseek'
+    ? /^Saldo USD:\s*([0-9]+(?:[.,][0-9]+)?)/i
+    : provider.provider === 'openrouter'
+      ? /^Credits balance:\s*\$?([0-9]+(?:[.,][0-9]+)?)/i
+      : null
+  if (!pattern) return null
+  for (const detail of provider.details) {
+    const match = detail.match(pattern)
+    if (match) return Number(match[1].replace(',', '.'))
+  }
+  return null
+}
+
+function translatedDetail(provider, detail) {
+  if (provider.provider !== 'openai-codex') return detail
+  const match = detail.match(/^You have (\d+) resets? banked\s*-\s*use \/usage reset to activate$/i)
+  if (!match) return detail
+  const count = Number(match[1])
+  return count === 1
+    ? 'Você tem 1 reset acumulado — use /usage reset para ativá-lo'
+    : `Você tem ${count} resets acumulados — use /usage reset para ativá-los`
+}
+
+function displayWindow(provider, window) {
+  if (provider.provider !== 'openai-codex') return window
+  if (window.label === 'Session') return { ...window, label: '5h' }
+  if (window.label === 'Weekly') return { ...window, label: '7d' }
+  return window
+}
+
 function WindowRow({ window }) {
   const remaining = typeof window.remaining_percent === 'number' ? window.remaining_percent : null
   return jsxs('div', {
@@ -52,8 +87,36 @@ function WindowRow({ window }) {
   })
 }
 
+function BalanceRow({ balance }) {
+  const remaining = Math.max(0, Math.min(100, balance * 10))
+  return jsxs('div', {
+    className: 'grid gap-1.5',
+    children: [
+      jsxs('div', {
+        className: 'flex items-baseline gap-2 text-xs',
+        children: [
+          jsx('span', { className: 'font-medium text-foreground', children: `Saldo: ${money(balance)}` }),
+          jsx('span', { className: 'ml-auto tabular-nums text-(--ui-text-secondary)', children: `${pct(remaining)} disponível` })
+        ]
+      }),
+      jsx('div', {
+        className: 'h-1.5 overflow-hidden rounded-full bg-(--ui-control-bg)',
+        children: jsx('div', {
+          className: `h-full rounded-full transition-[width] ${meterClass(remaining)}`,
+          style: { width: `${remaining}%` }
+        })
+      })
+    ]
+  })
+}
+
 function ProviderCard({ provider }) {
-  const hasData = provider.available && (provider.windows.length || provider.details.length)
+  const balance = balanceFromDetails(provider)
+  const windows = provider.windows.map(window => displayWindow(provider, window))
+  const details = balance === null
+    ? provider.details.map(detail => translatedDetail(provider, detail))
+    : []
+  const hasData = provider.available && (windows.length || details.length || balance !== null)
   return jsxs('section', {
     className: 'grid gap-3 rounded-xl border border-(--ui-border) bg-(--ui-surface-raised) p-3',
     children: [
@@ -66,13 +129,14 @@ function ProviderCard({ provider }) {
           provider.refreshing ? jsx(GlyphSpinner, { className: 'ml-auto size-3 text-(--ui-text-tertiary)' }) : null
         ]
       }),
-      hasData && provider.windows.length ? jsx('div', {
+      hasData && windows.length ? jsx('div', {
         className: 'grid gap-3',
-        children: provider.windows.map((window, index) => jsx(WindowRow, { window }, `${window.label}-${index}`))
+        children: windows.map((window, index) => jsx(WindowRow, { window }, `${window.label}-${index}`))
       }) : null,
-      provider.details.length ? jsx('div', {
+      balance !== null ? jsx(BalanceRow, { balance }) : null,
+      details.length ? jsx('div', {
         className: 'grid gap-1 border-t border-(--ui-border) pt-2 text-xs text-(--ui-text-secondary)',
-        children: provider.details.map((detail, index) => jsx('div', { children: detail }, index))
+        children: details.map((detail, index) => jsx('div', { children: detail }, index))
       }) : null,
       !hasData ? jsx('div', { className: 'text-xs text-(--ui-text-tertiary)', children: provider.reason || 'sem dados disponíveis' }) : null
     ]
