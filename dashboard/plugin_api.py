@@ -42,7 +42,10 @@ _pool = ThreadPoolExecutor(max_workers=len(FETCHERS), thread_name_prefix="quota-
 
 def _refresh(provider: str) -> None:
     try:
-        snapshot = FETCHERS[provider]()
+        try:
+            snapshot = FETCHERS[provider]()
+        except Exception:
+            snapshot = None
         with _lock:
             existing = _cache.get(provider)
             good_recent = existing is not None and existing[0].available and time.monotonic() - existing[1] <= STALE_MAX_SECONDS
