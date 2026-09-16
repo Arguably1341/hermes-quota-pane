@@ -60,7 +60,7 @@ function ProviderCard({ provider }) {
       jsxs('div', {
         className: 'flex min-w-0 items-center gap-2',
         children: [
-          jsx(StatusDot, { status: hasData ? 'success' : provider.refreshing ? 'pending' : 'error' }),
+          jsx(StatusDot, { tone: hasData ? 'good' : provider.refreshing ? 'warn' : 'bad' }),
           jsx('div', { className: 'truncate text-sm font-medium', children: provider.label }),
           provider.plan ? jsx('span', { className: 'rounded-full bg-(--ui-control-bg) px-2 py-0.5 text-[0.65rem] text-(--ui-text-secondary)', children: provider.plan }) : null,
           provider.refreshing ? jsx(GlyphSpinner, { className: 'ml-auto size-3 text-(--ui-text-tertiary)' }) : null
