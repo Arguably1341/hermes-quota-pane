@@ -1,4 +1,4 @@
-import { Button, GlyphSpinner, PANES_AREA, ScrollArea, StatusDot, useQuery } from '@hermes/plugin-sdk'
+import { Button, GlyphSpinner, host, PANES_AREA, ScrollArea, StatusDot, useQuery } from '@hermes/plugin-sdk'
 import { useState } from 'react'
 import { jsx, jsxs } from 'react/jsx-runtime'
 
@@ -140,5 +140,6 @@ export default {
       data: { placement: 'right', width: '370px' },
       render: () => jsx(QuotaPane, {})
     })
+    queueMicrotask(() => host.revealPane('quota-pane:pane'))
   }
 }
