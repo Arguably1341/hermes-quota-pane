@@ -22,9 +22,9 @@ function resetLabel(value) {
 }
 
 function meterClass(remaining) {
-  if (remaining <= 10) return 'bg-(--ui-danger)'
-  if (remaining <= 25) return 'bg-(--ui-warning)'
-  return 'bg-(--ui-success)'
+  if (remaining <= 10) return 'bg-destructive'
+  if (remaining <= 25) return 'bg-amber-500'
+  return 'bg-primary'
 }
 
 function WindowRow({ window }) {
