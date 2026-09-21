@@ -1,5 +1,5 @@
 name: quota-pane
-version: 1.1.0
+version: 1.1.1
 description: Native Hermes Desktop quota pane for Codex, OpenCode Go, Command Code, DeepSeek, and OpenRouter.
 author: Arguably1341
 kind: standalone
