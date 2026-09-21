@@ -36,3 +36,17 @@ The backend reuses Hermes provider credentials. It never returns credentials to 
 - one in-flight refresh per provider
 - reads are immediate; refresh happens in worker threads
 - missing or rejected credentials produce an explicit unavailable card, never a fake zero
+- a stale card reports **why** it went stale (`coleta falhando há N min`), so a permanent collection
+  failure is visible instead of masquerading as ordinary expiry
+
+## Profile-scoped credentials
+
+Worker threads do not inherit request contextvars, and a Desktop backend that serves more than one
+profile home flips `agent.secret_scope` to fail-closed — an unscoped secret read *raises* rather than
+borrowing another profile's value. Fetchers therefore run inside
+`set_secret_scope(launch_secret_scope(get_process_hermes_home()))`; the OpenRouter card is the one that
+breaks without it, because it is the only adapter that resolves its key through the scope-aware core
+path (`agent/account_usage.py`) instead of reading `$HERMES_HOME/.env` directly.
+
+Symptom if this regresses: **OpenRouter alone** shows `dados expirados` while the other four cards
+stay fresh.

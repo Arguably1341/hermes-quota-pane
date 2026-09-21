@@ -6,6 +6,7 @@ import importlib.util
 import threading
 import time
 from concurrent.futures import ThreadPoolExecutor
+from contextlib import contextmanager
 from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any
@@ -37,16 +38,68 @@ _lock = threading.RLock()
 _cache: dict[str, tuple[Any, float]] = {}
 _in_flight: set[str] = set()
 _last_attempt: dict[str, float] = {}
+_failures: dict[str, float] = {}
 _pool = ThreadPoolExecutor(max_workers=len(FETCHERS), thread_name_prefix="quota-pane")
+
+
+@contextmanager
+def _profile_secrets():
+    """Bind the owning profile's secret scope around a fetcher call.
+
+    A Desktop backend that serves more than one profile home flips agent.secret_scope to
+    fail-closed: an unscoped secret read RAISES instead of borrowing another profile's value
+    (tui_gateway/launch_profile_policy.py). Our fetchers run in pool threads, which do not inherit
+    the request's contextvars, and the OpenRouter adapter resolves its key through that scope-aware
+    path (agent/account_usage.py::_fetch_openrouter_account_usage), so without this the card freezes
+    on its last good snapshot. Cores without the scoping API fall through to the plain call.
+    """
+    token = None
+    try:
+        from agent.secret_scope import set_secret_scope
+        from hermes_constants import get_process_hermes_home
+
+        home = get_process_hermes_home()
+        try:
+            from tui_gateway.launch_profile_policy import launch_secret_scope
+
+            secrets = launch_secret_scope(home)
+        except Exception:
+            from agent.secret_scope import build_profile_secret_scope
+
+            secrets = build_profile_secret_scope(Path(home))
+        token = set_secret_scope(secrets)
+    except Exception:
+        token = None
+    try:
+        yield
+    finally:
+        if token is not None:
+            try:
+                from agent.secret_scope import reset_secret_scope
+
+                reset_secret_scope(token)
+            except Exception:
+                pass
+
+
+def _failure_reason(failing_since: float) -> str:
+    minutes = int(max(0.0, time.monotonic() - failing_since) // 60)
+    return f"coleta falhando há {minutes} min" if minutes else "coleta falhando há menos de 1 min"
 
 
 def _refresh(provider: str) -> None:
     try:
         try:
-            snapshot = FETCHERS[provider]()
+            with _profile_secrets():
+                snapshot = FETCHERS[provider]()
         except Exception:
             snapshot = None
         with _lock:
+            if snapshot is None:
+                # Keep the START of the streak: the age of the failure is what makes the card useful.
+                _failures.setdefault(provider, time.monotonic())
+            else:
+                _failures.pop(provider, None)
             existing = _cache.get(provider)
             good_recent = existing is not None and existing[0].available and time.monotonic() - existing[1] <= STALE_MAX_SECONDS
             if snapshot is not None and (snapshot.available or not good_recent):
@@ -83,12 +136,16 @@ def _provider_payload(provider: str) -> dict[str, Any]:
         entry = _cache.get(provider)
         refreshing = provider in _in_flight
     base = {"provider": provider, "label": PROVIDER_LABELS[provider], "refreshing": refreshing}
+    failing_since = _failures.get(provider)
     if entry is None:
-        return {**base, "available": False, "windows": [], "details": [], "reason": "primeira coleta em andamento"}
+        reason = "primeira coleta em andamento" if failing_since is None else f"primeira coleta falhou — {_failure_reason(failing_since)}"
+        return {**base, "available": False, "windows": [], "details": [], "reason": reason}
     snapshot, monotonic_at = entry
     cache_age = max(0.0, time.monotonic() - monotonic_at)
     if cache_age > STALE_MAX_SECONDS:
-        return {**base, "available": False, "windows": [], "details": [], "reason": "dados expirados"}
+        # Report WHY the data went stale; a bare "dados expirados" hid a permanent collection failure.
+        reason = "dados expirados" if failing_since is None else f"dados expirados — {_failure_reason(failing_since)}"
+        return {**base, "available": False, "windows": [], "details": [], "reason": reason}
     return {
         **base,
         "available": snapshot.available,
