@@ -7,7 +7,10 @@ on stock Hermes and never relies on footer patches.
 from __future__ import annotations
 
 import math
+import os
+from contextlib import contextmanager
 from datetime import datetime, timezone
+from pathlib import Path
 from typing import Any, Callable, Optional
 
 import httpx
@@ -271,6 +274,187 @@ def deepseek_snapshot() -> AccountUsageSnapshot:
         return _snapshot(provider, "deepseek_balance_api", unavailable_reason=_http_reason(exc, "API de saldo"))
 
 
+# ---- Parallel (Account API: só GET /balance) ------------------------------------
+#
+# O saldo vive em ``GET /account/service/v1/balance``, e esse endpoint RECUSA a
+# ``PARALLEL_API_KEY`` (escopo de produto). Ele só aceita um access token do OAuth
+# de dispositivo (RFC 8628) contra ``platform.parallel.ai/getServiceKeys/*``.
+#
+# O grant é pedido com o escopo MÍNIMO ``balance:read`` — sem ``keys:*``,
+# ``apps:*`` nem ``balance:add``. O fetcher, por sua vez, conhece uma única rota:
+# ``GET /balance``. São duas camadas independentes: o grant não cobra cartão nem
+# emite chave, e este código não sabe fazer outra chamada.
+#
+# O refresh token ROTACIONA a cada troca (o servidor devolve um par novo), então o
+# valor novo volta para o ``.env`` do perfil padrão (saldo organizacional compartilhado)
+# pelo escritor atômico do core, sem publicar o segredo em ``os.environ`` nem
+# no scope do backend de outro perfil. O lock interprocesso protege a releitura,
+# a troca e a gravação. Se a gravação falhar, o par antigo já foi consumido:
+# o card mostra indisponível até um novo device flow.
+
+_PARALLEL_PLATFORM_URL = "https://platform.parallel.ai"
+_PARALLEL_SERVICE_API_URL = "https://api.parallel.ai/account"
+_PARALLEL_REFRESH_ENV = "PARALLEL_OAUTH_REFRESH_TOKEN"
+_PARALLEL_CLIENT_ID_ENV = "PARALLEL_OAUTH_CLIENT_ID"
+_PARALLEL_FALLBACK_CLIENT_ID = "parallel-cli"
+_PARALLEL_REFRESH_GRANT = "refresh_token"
+
+
+@contextmanager
+def _parallel_shared_home():
+    """Share only Parallel's account balance, keeping the other cards profile-local."""
+    from hermes_constants import get_default_hermes_root, reset_hermes_home_override, set_hermes_home_override
+
+    token = set_hermes_home_override(get_default_hermes_root())
+    try:
+        yield
+    finally:
+        reset_hermes_home_override(token)
+
+
+@contextmanager
+def _parallel_refresh_lock():
+    """Serialize refresh read/exchange/write across profile backend processes."""
+    from hermes_constants import get_hermes_home
+
+    path = Path(get_hermes_home()) / ".parallel-balance.lock"
+    fd = os.open(path, os.O_CREAT | os.O_RDWR, 0o600)
+    try:
+        if os.name == "nt":
+            import msvcrt
+
+            os.lseek(fd, 0, os.SEEK_SET)
+            msvcrt.locking(fd, msvcrt.LK_LOCK, 1)
+        else:
+            import fcntl
+
+            fcntl.flock(fd, fcntl.LOCK_EX)
+        try:
+            yield
+        finally:
+            if os.name == "nt":
+                os.lseek(fd, 0, os.SEEK_SET)
+                msvcrt.locking(fd, msvcrt.LK_UNLCK, 1)
+            else:
+                fcntl.flock(fd, fcntl.LOCK_UN)
+    finally:
+        os.close(fd)
+
+
+def _persist_parallel_refresh(refresh_token: str) -> None:
+    """Atomically update the shared .env without publishing its secret to Marie's scope."""
+    from agent.secret_scope import load_env_file
+    from hermes_cli.config import (
+        _env_line_defines_key, _env_write_blocked, _quote_env_value,
+        _read_env_lines, _write_env_lines,
+    )
+    from hermes_constants import get_hermes_home
+
+    if _env_write_blocked(_PARALLEL_REFRESH_ENV, "set"):
+        raise OSError("Parallel refresh token is managed and cannot be updated")
+    env_path = Path(get_hermes_home()) / ".env"
+    lines = _read_env_lines(env_path)
+    updated = f"{_PARALLEL_REFRESH_ENV}={_quote_env_value(refresh_token)}\n"
+    index = next((i for i, line in enumerate(lines) if _env_line_defines_key(line, _PARALLEL_REFRESH_ENV)), None)
+    if index is None:
+        if lines and not lines[-1].endswith("\n"):
+            lines[-1] += "\n"
+        lines.append(updated)
+    else:
+        lines[index] = updated
+    # save_env_value would also publish to os.environ / current_secret_scope, leaking
+    # the shared token into the current profile's in-memory environment.
+    _write_env_lines(env_path, lines, preserve_mode=True)
+    if load_env_file(env_path).get(_PARALLEL_REFRESH_ENV) != refresh_token:
+        raise OSError("Parallel refresh token was not persisted")
+
+
+def _parallel_access_token() -> tuple[str, str | None]:
+    """Troca o refresh token compartilhado e persiste a rotação sob lock interprocesso."""
+    with _parallel_refresh_lock():
+        return _parallel_access_token_locked()
+
+
+def _parallel_access_token_locked() -> tuple[str, str | None]:
+    """O lock cobre a releitura do .env, a troca no servidor e a gravação."""
+    from agent.secret_scope import load_env_file
+    from hermes_constants import get_hermes_home
+
+    # Releia no disco: outro backend do Desktop pode ter acabado de rotacionar
+    # o token. O scope herdado do worker pertence à conversa (e pode ser Marie).
+    secrets = load_env_file(Path(get_hermes_home()) / ".env")
+    refresh_token = str(secrets.get(_PARALLEL_REFRESH_ENV) or "").strip()
+    if not refresh_token:
+        return "", "sem login Parallel (rode o device flow do usuário Member)"
+    client_id = str(secrets.get(_PARALLEL_CLIENT_ID_ENV) or "").strip() or _PARALLEL_FALLBACK_CLIENT_ID
+    try:
+        response = httpx.post(
+            f"{_PARALLEL_PLATFORM_URL}/getServiceKeys/token",
+            data={
+                "grant_type": _PARALLEL_REFRESH_GRANT,
+                "refresh_token": refresh_token,
+                "client_id": client_id,
+            },
+            headers={"Accept": "application/json"},
+            timeout=15.0,
+        )
+        response.raise_for_status()
+        payload = response.json() or {}
+    except httpx.HTTPStatusError as exc:
+        if exc.response.status_code in (400, 401, 403):
+            return "", "login Parallel expirado — refaça o device flow"
+        return "", _http_reason(exc, "token Parallel")
+    except Exception as exc:
+        return "", _http_reason(exc, "token Parallel")
+
+    access_token = str(payload.get("access_token") or "").strip()
+    if not access_token:
+        return "", "token Parallel sem access_token"
+    rotated = str(payload.get("refresh_token") or "").strip()
+    if rotated and rotated != refresh_token:
+        try:
+            _persist_parallel_refresh(rotated)
+        except Exception:
+            return "", "não foi possível salvar o token Parallel renovado — refaça o login"
+    return access_token, None
+
+
+def parallel_snapshot() -> AccountUsageSnapshot:
+    # O card é deliberadamente organizacional: o token e a rotação moram no
+    # .env do perfil padrão, mesmo quando o Desktop usa o backend da Marie.
+    with _parallel_shared_home():
+        return _parallel_snapshot_shared()
+
+
+def _parallel_snapshot_shared() -> AccountUsageSnapshot:
+    provider = "parallel"
+    access_token, reason = _parallel_access_token()
+    if not access_token:
+        return _snapshot(provider, "parallel_balance_api", unavailable_reason=reason)
+    try:
+        response = httpx.get(
+            f"{_PARALLEL_SERVICE_API_URL}/service/v1/balance",
+            headers={"Authorization": f"Bearer {access_token}", "Accept": "application/json"},
+            timeout=10.0,
+        )
+        response.raise_for_status()
+        payload = response.json() or {}
+    except Exception as exc:
+        return _snapshot(provider, "parallel_balance_api", unavailable_reason=_http_reason(exc, "API de saldo"))
+
+    details: list[str] = []
+    if bool(payload.get("will_invoice")):
+        # Pós-pago: os dois campos de centavos vêm sempre 0, então não inventamos saldo.
+        details.append("Organização pós-paga (fatura) — sem saldo pré-pago")
+    else:
+        credit = _number(payload.get("credit_balance_cents")) or 0.0
+        details.append(f"Saldo USD: {credit / 100.0:.2f}")
+        pending = _number(payload.get("pending_debit_balance_cents")) or 0.0
+        if pending > 0:
+            details.append(f"Retido em tarefas em voo: ${pending / 100.0:.2f}")
+    return _snapshot(provider, "parallel_balance_api", details=details)
+
+
 FETCHERS: dict[str, Callable[[], AccountUsageSnapshot | None]] = {
     "openai-codex": codex_snapshot,
     "opencode-go": opencode_go_snapshot,
@@ -278,4 +462,5 @@ FETCHERS: dict[str, Callable[[], AccountUsageSnapshot | None]] = {
     "deepseek": deepseek_snapshot,
     "firecrawl": firecrawl_snapshot,
     "openrouter": openrouter_snapshot,
+    "parallel": parallel_snapshot,
 }

@@ -31,6 +31,7 @@ PROVIDER_LABELS = {
     "deepseek": "DeepSeek",
     "firecrawl": "Firecrawl",
     "openrouter": "OpenRouter",
+    "parallel": "Parallel · compartilhado",
 }
 CACHE_TTL_SECONDS = 90.0
 STALE_MAX_SECONDS = 300.0

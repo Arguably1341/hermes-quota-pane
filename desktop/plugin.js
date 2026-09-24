@@ -48,8 +48,8 @@ function cardSummary(windows, balance) {
 }
 
 function balanceFromDetails(provider) {
-  const pattern = provider.provider === 'deepseek'
-    ? /^Saldo USD:\s*([0-9]+(?:[.,][0-9]+)?)/i
+  const pattern = provider.provider === 'deepseek' || provider.provider === 'parallel'
+    ? /^Saldo USD:\s*\$?([0-9]+(?:[.,][0-9]+)?)/i
     : provider.provider === 'openrouter'
       ? /^Credits balance:\s*\$?([0-9]+(?:[.,][0-9]+)?)/i
       : null
@@ -59,6 +59,13 @@ function balanceFromDetails(provider) {
     if (match) return Number(match[1].replace(',', '.'))
   }
   return null
+}
+
+// Escala da barra do saldo: DeepSeek/OpenRouter usam a referência histórica de
+// US$ 10 = 100%. O Parallel é saldo pré-pago sem alvo definido, então não há
+// percentual honesto a mostrar — devolve null e o card mostra só o número.
+function balanceCeiling(provider) {
+  return provider.provider === 'parallel' ? null : 10
 }
 
 function translatedDetail(provider, detail) {
@@ -103,8 +110,9 @@ function WindowRow({ window }) {
   })
 }
 
-function BalanceRow({ balance }) {
-  const remaining = Math.max(0, Math.min(100, balance * 10))
+function BalanceRow({ balance, ceiling }) {
+  const hasCeiling = typeof ceiling === 'number' && ceiling > 0
+  const remaining = hasCeiling ? Math.max(0, Math.min(100, (balance / ceiling) * 100)) : null
   return jsxs('div', {
     className: 'grid gap-1.5',
     children: [
@@ -112,10 +120,10 @@ function BalanceRow({ balance }) {
         className: 'flex items-baseline gap-2 text-xs',
         children: [
           jsx('span', { className: 'font-medium text-foreground', children: `Saldo: ${money(balance)}` }),
-          jsx('span', { className: 'ml-auto tabular-nums text-(--ui-text-secondary)', children: `${pct(remaining)} disponível` })
+          remaining === null ? null : jsx('span', { className: 'ml-auto tabular-nums text-(--ui-text-secondary)', children: `${pct(remaining)} disponível` })
         ]
       }),
-      jsx('div', {
+      remaining === null ? null : jsx('div', {
         className: 'h-1.5 overflow-hidden rounded-full bg-(--ui-control-bg)',
         children: jsx('div', {
           className: `h-full rounded-full transition-[width] ${meterClass(remaining)}`,
@@ -166,7 +174,7 @@ function ProviderCard({ provider }) {
         className: 'grid gap-3',
         children: windows.map((window, index) => jsx(WindowRow, { window }, `${window.label}-${index}`))
       }) : null,
-      open && balance !== null ? jsx(BalanceRow, { balance }) : null,
+      open && balance !== null ? jsx(BalanceRow, { balance, ceiling: balanceCeiling(provider) }) : null,
       open && details.length ? jsx('div', {
         className: 'grid gap-1 border-t border-(--ui-border) pt-2 text-xs text-(--ui-text-secondary)',
         children: details.map((detail, index) => jsx('div', { children: detail }, index))
@@ -226,7 +234,7 @@ function QuotaPane() {
 export default {
   id: 'quota-pane',
   name: 'Cotas',
-  description: 'Cotas e saldos de Codex, OpenCode Go, Command Code, DeepSeek, Firecrawl e OpenRouter em um pane nativo.',
+  description: 'Cotas e saldos de Codex, OpenCode Go, Command Code, DeepSeek, Firecrawl, OpenRouter e Parallel em um pane nativo.',
   defaultEnabled: true,
   register(ctx) {
     api = ctx.rest
