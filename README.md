@@ -6,6 +6,7 @@ A small native pane for Hermes Desktop showing account quota or balance for:
 - OpenCode Go
 - Command Code
 - DeepSeek
+- Firecrawl
 - OpenRouter
 
 It uses the supported Desktop Plugin SDK and a profile-aware `plugin_api.py` backend. It adds no tools, hooks, prompt content, footer fields, or core patches. Provider failures are isolated; the last good snapshot remains visible briefly while refresh retries run in the background.
@@ -27,6 +28,7 @@ The backend reuses Hermes provider credentials. It never returns credentials to 
 - `opencode-go`: `OPENCODE_GO_API_KEY`
 - `commandcode`: `COMMANDCODE_API_KEY`
 - `deepseek`: `DEEPSEEK_API_KEY`
+- `firecrawl`: `FIRECRAWL_API_KEY`
 - `openrouter`: `OPENROUTER_API_KEY`
 
 ## Data behavior

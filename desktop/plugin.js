@@ -193,7 +193,7 @@ function QuotaPane() {
 export default {
   id: 'quota-pane',
   name: 'Cotas',
-  description: 'Cotas e saldos de Codex, OpenCode Go, Command Code, DeepSeek e OpenRouter em um pane nativo.',
+  description: 'Cotas e saldos de Codex, OpenCode Go, Command Code, DeepSeek, Firecrawl e OpenRouter em um pane nativo.',
   defaultEnabled: true,
   register(ctx) {
     api = ctx.rest

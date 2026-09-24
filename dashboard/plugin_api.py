@@ -29,6 +29,7 @@ PROVIDER_LABELS = {
     "opencode-go": "OpenCode Go",
     "commandcode": "Command Code",
     "deepseek": "DeepSeek",
+    "firecrawl": "Firecrawl",
     "openrouter": "OpenRouter",
 }
 CACHE_TTL_SECONDS = 90.0

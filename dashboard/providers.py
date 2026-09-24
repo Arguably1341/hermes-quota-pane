@@ -1,8 +1,8 @@
 """Provider adapters owned by Quota Pane.
 
 Only Codex and OpenRouter delegate to Hermes' stable account-usage contract.
-OpenCode Go, Command Code, and DeepSeek stay here so the plugin works on stock
-Hermes and never relies on footer patches.
+OpenCode Go, Command Code, DeepSeek, and Firecrawl stay here so the plugin works
+on stock Hermes and never relies on footer patches.
 """
 from __future__ import annotations
 
@@ -13,6 +13,7 @@ from typing import Any, Callable, Optional
 import httpx
 
 from agent.account_usage import AccountUsageSnapshot, AccountUsageWindow, fetch_account_usage
+from agent.secret_scope import get_secret
 from hermes_cli.auth import resolve_api_key_provider_credentials
 
 
@@ -197,6 +198,41 @@ def commandcode_snapshot() -> AccountUsageSnapshot:
     )
 
 
+def firecrawl_snapshot() -> AccountUsageSnapshot:
+    provider = "firecrawl"
+    token = str(get_secret("FIRECRAWL_API_KEY", "") or "").strip()
+    if not token:
+        return _snapshot(provider, "firecrawl_credit_usage_api", unavailable_reason="sem credencial FIRECRAWL_API_KEY")
+    try:
+        response = httpx.get(
+            "https://api.firecrawl.dev/v2/team/credit-usage",
+            headers={"Authorization": f"Bearer {token}", "Accept": "application/json"},
+            timeout=10.0,
+        )
+        response.raise_for_status()
+        data = (response.json() or {}).get("data")
+        if not isinstance(data, dict):
+            return _snapshot(provider, "firecrawl_credit_usage_api", unavailable_reason="API sem saldo")
+        remaining = _number(data.get("remainingCredits"))
+        plan = _number(data.get("planCredits"))
+        if remaining is None or plan is None or plan <= 0:
+            return _snapshot(provider, "firecrawl_credit_usage_api", unavailable_reason="API sem saldo válido")
+        used = max(0.0, min(100.0, (plan - remaining) / plan * 100.0))
+        reset_at = _datetime(data.get("billingPeriodEnd"))
+        return _snapshot(
+            provider,
+            "firecrawl_credit_usage_api",
+            windows=[AccountUsageWindow(
+                label="Ciclo",
+                used_percent=used,
+                reset_at=reset_at,
+                detail=f"{remaining:.0f} de {plan:.0f} créditos",
+            )],
+        )
+    except Exception as exc:
+        return _snapshot(provider, "firecrawl_credit_usage_api", unavailable_reason=_http_reason(exc, "API de créditos"))
+
+
 def deepseek_snapshot() -> AccountUsageSnapshot:
     provider = "deepseek"
     token, base_url = _credentials(provider)
@@ -240,5 +276,6 @@ FETCHERS: dict[str, Callable[[], AccountUsageSnapshot | None]] = {
     "opencode-go": opencode_go_snapshot,
     "commandcode": commandcode_snapshot,
     "deepseek": deepseek_snapshot,
+    "firecrawl": firecrawl_snapshot,
     "openrouter": openrouter_snapshot,
 }
