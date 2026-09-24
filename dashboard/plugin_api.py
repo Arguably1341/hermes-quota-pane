@@ -22,6 +22,12 @@ _providers = importlib.util.module_from_spec(_spec)
 _spec.loader.exec_module(_providers)
 FETCHERS = _providers.FETCHERS
 
+# Cards deliberately kept out of the pane. Command Code's GOAT plan is exhausted and won't be
+# renewed short-term (2026-09): re-enable by removing it from this set — the fetcher and label
+# stay defined, so nothing else changes when the plan comes back.
+DISABLED_PROVIDERS = frozenset({"commandcode"})
+ACTIVE_FETCHERS = {name: fetcher for name, fetcher in FETCHERS.items() if name not in DISABLED_PROVIDERS}
+
 router = APIRouter()
 
 PROVIDER_LABELS = {
@@ -31,7 +37,7 @@ PROVIDER_LABELS = {
     "deepseek": "DeepSeek",
     "firecrawl": "Firecrawl",
     "openrouter": "OpenRouter",
-    "parallel": "Parallel · compartilhado",
+    "parallel": "Parallel",
 }
 CACHE_TTL_SECONDS = 90.0
 STALE_MAX_SECONDS = 300.0
@@ -41,7 +47,7 @@ _cache: dict[str, tuple[Any, float]] = {}
 _in_flight: set[str] = set()
 _last_attempt: dict[str, float] = {}
 _failures: dict[str, float] = {}
-_pool = ThreadPoolExecutor(max_workers=len(FETCHERS), thread_name_prefix="quota-pane")
+_pool = ThreadPoolExecutor(max_workers=len(ACTIVE_FETCHERS), thread_name_prefix="quota-pane")
 
 
 @contextmanager
@@ -113,7 +119,7 @@ def _refresh(provider: str) -> None:
 
 def _schedule(*, force: bool = False) -> None:
     now = time.monotonic()
-    for provider in FETCHERS:
+    for provider in ACTIVE_FETCHERS:
         with _lock:
             existing = _cache.get(provider)
             fresh = existing is not None and now - existing[1] < CACHE_TTL_SECONDS
@@ -176,7 +182,7 @@ def _payload() -> dict[str, Any]:
     return {
         "generated_at": datetime.now(timezone.utc).isoformat(),
         "refreshing": refreshing,
-        "providers": [_provider_payload(provider) for provider in FETCHERS],
+        "providers": [_provider_payload(provider) for provider in ACTIVE_FETCHERS],
     }
 
 
@@ -194,7 +200,7 @@ async def refresh() -> dict[str, Any]:
 
 @router.get("/health")
 async def health() -> dict[str, Any]:
-    return {"ok": True, "providers": list(FETCHERS)}
+    return {"ok": True, "providers": list(ACTIVE_FETCHERS)}
 
 
 async def wait_for_initial_data(timeout: float = 15.0) -> dict[str, Any]:
@@ -203,7 +209,7 @@ async def wait_for_initial_data(timeout: float = 15.0) -> dict[str, Any]:
     deadline = time.monotonic() + timeout
     while time.monotonic() < deadline:
         with _lock:
-            if len(_cache) == len(FETCHERS) and not _in_flight:
+            if len(_cache) == len(ACTIVE_FETCHERS) and not _in_flight:
                 break
         await asyncio.sleep(0.05)
     return _payload()

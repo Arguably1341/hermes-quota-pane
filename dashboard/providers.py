@@ -455,12 +455,14 @@ def _parallel_snapshot_shared() -> AccountUsageSnapshot:
     return _snapshot(provider, "parallel_balance_api", details=details)
 
 
+# Order here is the card order in the pane. Command Code stays defined but is filtered out
+# while its plan is exhausted — see DISABLED_PROVIDERS in plugin_api.py.
 FETCHERS: dict[str, Callable[[], AccountUsageSnapshot | None]] = {
     "openai-codex": codex_snapshot,
     "opencode-go": opencode_go_snapshot,
-    "commandcode": commandcode_snapshot,
     "deepseek": deepseek_snapshot,
-    "firecrawl": firecrawl_snapshot,
     "openrouter": openrouter_snapshot,
     "parallel": parallel_snapshot,
+    "firecrawl": firecrawl_snapshot,
+    "commandcode": commandcode_snapshot,
 }

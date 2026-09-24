@@ -61,11 +61,10 @@ function balanceFromDetails(provider) {
   return null
 }
 
-// Escala da barra do saldo: DeepSeek/OpenRouter usam a referência histórica de
-// US$ 10 = 100%. O Parallel é saldo pré-pago sem alvo definido, então não há
-// percentual honesto a mostrar — devolve null e o card mostra só o número.
-function balanceCeiling(provider) {
-  return provider.provider === 'parallel' ? null : 10
+// Escala das barras de saldo: US$ 10 = 100%, a mesma referência para todos os
+// cards de saldo (DeepSeek, OpenRouter e Parallel).
+function balanceCeiling() {
+  return 10
 }
 
 function translatedDetail(provider, detail) {
@@ -174,7 +173,7 @@ function ProviderCard({ provider }) {
         className: 'grid gap-3',
         children: windows.map((window, index) => jsx(WindowRow, { window }, `${window.label}-${index}`))
       }) : null,
-      open && balance !== null ? jsx(BalanceRow, { balance, ceiling: balanceCeiling(provider) }) : null,
+      open && balance !== null ? jsx(BalanceRow, { balance, ceiling: balanceCeiling() }) : null,
       open && details.length ? jsx('div', {
         className: 'grid gap-1 border-t border-(--ui-border) pt-2 text-xs text-(--ui-text-secondary)',
         children: details.map((detail, index) => jsx('div', { children: detail }, index))
@@ -234,7 +233,7 @@ function QuotaPane() {
 export default {
   id: 'quota-pane',
   name: 'Cotas',
-  description: 'Cotas e saldos de Codex, OpenCode Go, Command Code, DeepSeek, Firecrawl, OpenRouter e Parallel em um pane nativo.',
+  description: 'Cotas e saldos de ChatGPT / Codex, OpenCode Go, DeepSeek, OpenRouter, Parallel e Firecrawl em um pane nativo.',
   defaultEnabled: true,
   register(ctx) {
     api = ctx.rest

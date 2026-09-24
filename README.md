@@ -4,11 +4,13 @@ A small native pane for Hermes Desktop showing account quota or balance for:
 
 - ChatGPT / Codex
 - OpenCode Go
-- Command Code
 - DeepSeek
-- Firecrawl
 - OpenRouter
 - Parallel
+- Firecrawl
+
+Card order in the pane follows this list. The Command Code card is filtered out while its GOAT plan
+is exhausted — remove the id from `DISABLED_PROVIDERS` in `dashboard/plugin_api.py` to bring it back.
 
 It uses the supported Desktop Plugin SDK and a profile-aware `plugin_api.py` backend. It adds no tools, hooks, prompt content, footer fields, or core patches. Provider failures are isolated; the last good snapshot remains visible briefly while refresh retries run in the background.
 
@@ -60,8 +62,8 @@ publishing the token to the current profile's in-memory secret scope or process 
 profiles. The Desktop uses a separate backend per profile; only this card reads the token from the
 default Hermes home's `.env`, and every backend writes the rotated token back to that same file. No
 credential is copied into Marie's `.env`, and the token is never sent to the renderer. The card is
-labeled **Parallel · compartilhado**. All other cards continue to resolve credentials in their own
-profile. A `0600` interprocess lock in the default home serializes the refresh exchange so Ada and
+titled just **Parallel** and renders like the OpenRouter balance card (US$ 10 = 100% bar). All other
+cards continue to resolve credentials in their own profile. A `0600` interprocess lock in the default home serializes the refresh exchange so Ada and
 Marie cannot race and invalidate each other's rotating token. This arrangement intentionally gives
 the quota-pane backend of an enabled profile read access to this *one* shared credential; do not
 enable the plugin for profiles whose operators must not see the organization's balance.

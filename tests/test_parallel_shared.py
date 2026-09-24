@@ -34,13 +34,19 @@ class Response:
 
 
 class ParallelSharedTests(unittest.TestCase):
-    def test_parallel_card_is_labeled_shared(self):
-        spec = importlib.util.spec_from_file_location("quota_api_shared_label_test", API_PATH)
+    def test_pane_card_set_order_and_disabled_commandcode(self):
+        spec = importlib.util.spec_from_file_location("quota_api_cards_test", API_PATH)
         api = importlib.util.module_from_spec(spec)
         assert spec.loader is not None
         spec.loader.exec_module(api)
-        self.assertIn("compartilhado", api.PROVIDER_LABELS["parallel"].lower())
-        self.assertNotIn("compartilhado", api.PROVIDER_LABELS["firecrawl"].lower())
+        self.assertEqual(api.PROVIDER_LABELS["parallel"], "Parallel")
+        self.assertEqual(
+            list(api.ACTIVE_FETCHERS),
+            ["openai-codex", "opencode-go", "deepseek", "openrouter", "parallel", "firecrawl"],
+        )
+        self.assertIn("commandcode", api.FETCHERS)
+        self.assertNotIn("commandcode", api.ACTIVE_FETCHERS)
+        self.assertIn("commandcode", api.PROVIDER_LABELS)
 
     def test_marie_reads_default_balance_and_rotates_only_default_secret(self):
         with tempfile.TemporaryDirectory() as tmp:
