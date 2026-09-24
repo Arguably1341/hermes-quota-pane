@@ -1,8 +1,10 @@
-import { Button, GlyphSpinner, host, PANES_AREA, ScrollArea, StatusDot, useQuery } from '@hermes/plugin-sdk'
+import { Button, DisclosureCaret, GlyphSpinner, host, PANES_AREA, ScrollArea, StatusDot, useQuery } from '@hermes/plugin-sdk'
 import { useState } from 'react'
 import { jsx, jsxs } from 'react/jsx-runtime'
 
 let api = null
+let storage = null
+const COLLAPSED_KEY = 'collapsed-providers'
 
 function pct(value) {
   return typeof value === 'number' && Number.isFinite(value) ? `${Math.round(value)}%` : '—'
@@ -29,6 +31,20 @@ function meterClass(remaining) {
 
 function money(value) {
   return `$${value.toLocaleString('pt-BR', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`
+}
+
+function collapsedSet() {
+  const stored = storage?.get(COLLAPSED_KEY, [])
+  return new Set(Array.isArray(stored) ? stored.filter(id => typeof id === 'string') : [])
+}
+
+function cardSummary(windows, balance) {
+  if (balance !== null) return money(balance)
+  const percents = windows
+    .map(window => window.remaining_percent)
+    .filter(value => typeof value === 'number' && Number.isFinite(value))
+  if (!percents.length) return ''
+  return percents.length === 1 ? pct(percents[0]) : percents.map(value => pct(value)).join(' · ')
 }
 
 function balanceFromDetails(provider) {
@@ -117,24 +133,41 @@ function ProviderCard({ provider }) {
     ? provider.details.map(detail => translatedDetail(provider, detail))
     : []
   const hasData = provider.available && (windows.length || details.length || balance !== null)
+  const [collapsed, setCollapsed] = useState(() => hasData && collapsedSet().has(provider.provider))
+  const open = !hasData || !collapsed
+  const summary = cardSummary(windows, balance)
+  const toggle = () => {
+    if (!hasData) return
+    const next = collapsedSet()
+    if (next.has(provider.provider)) next.delete(provider.provider)
+    else next.add(provider.provider)
+    storage?.set(COLLAPSED_KEY, [...next])
+    setCollapsed(next.has(provider.provider))
+  }
   return jsxs('section', {
     className: 'grid gap-3 rounded-xl border border-(--ui-border) bg-(--ui-surface-raised) p-3',
     children: [
-      jsxs('div', {
-        className: 'flex min-w-0 items-center gap-2',
+      jsxs('button', {
+        type: 'button',
+        'aria-expanded': open,
+        disabled: !hasData,
+        onClick: toggle,
+        className: 'flex min-w-0 items-center gap-2 text-left disabled:cursor-default',
         children: [
+          jsx(DisclosureCaret, { open, className: hasData ? 'text-(--ui-text-tertiary)' : 'invisible' }),
           jsx(StatusDot, { tone: hasData ? 'good' : provider.refreshing ? 'warn' : 'bad' }),
-          jsx('div', { className: 'truncate text-sm font-medium', children: provider.label }),
+          jsx('span', { className: 'truncate text-sm font-medium text-foreground', children: provider.label }),
           provider.plan ? jsx('span', { className: 'rounded-full bg-(--ui-control-bg) px-2 py-0.5 text-[0.65rem] text-(--ui-text-secondary)', children: provider.plan }) : null,
-          provider.refreshing ? jsx(GlyphSpinner, { className: 'ml-auto size-3 text-(--ui-text-tertiary)' }) : null
+          summary && !open ? jsx('span', { className: 'ml-auto shrink-0 tabular-nums text-xs text-(--ui-text-secondary)', children: summary }) : null,
+          provider.refreshing ? jsx(GlyphSpinner, { className: `${summary && !open ? '' : 'ml-auto '}size-3 shrink-0 text-(--ui-text-tertiary)` }) : null
         ]
       }),
-      hasData && windows.length ? jsx('div', {
+      open && hasData && windows.length ? jsx('div', {
         className: 'grid gap-3',
         children: windows.map((window, index) => jsx(WindowRow, { window }, `${window.label}-${index}`))
       }) : null,
-      balance !== null ? jsx(BalanceRow, { balance }) : null,
-      details.length ? jsx('div', {
+      open && balance !== null ? jsx(BalanceRow, { balance }) : null,
+      open && details.length ? jsx('div', {
         className: 'grid gap-1 border-t border-(--ui-border) pt-2 text-xs text-(--ui-text-secondary)',
         children: details.map((detail, index) => jsx('div', { children: detail }, index))
       }) : null,
@@ -197,6 +230,7 @@ export default {
   defaultEnabled: true,
   register(ctx) {
     api = ctx.rest
+    storage = ctx.storage
     ctx.register({
       id: 'pane',
       area: PANES_AREA,
