@@ -1,6 +1,7 @@
 """Parallel is the one deliberately shared card; all other profile secrets remain local."""
 from __future__ import annotations
 
+import httpx
 import importlib.util
 import os
 import tempfile
@@ -31,6 +32,20 @@ class Response:
 
     def json(self):
         return self.payload
+
+
+class StatusResponse(Response):
+    """Resposta com status de erro real, para exercitar o caminho de HTTPStatusError."""
+
+    def __init__(self, payload, status_code):
+        super().__init__(payload)
+        self.status_code = status_code
+
+    def raise_for_status(self):
+        request = httpx.Request("POST", "https://platform.parallel.ai/getServiceKeys/token")
+        raise httpx.HTTPStatusError(
+            f"HTTP {self.status_code}", request=request, response=httpx.Response(self.status_code, request=request)
+        )
 
 
 class ParallelSharedTests(unittest.TestCase):
@@ -156,6 +171,131 @@ class ParallelSharedTests(unittest.TestCase):
             self.assertEqual(server["calls"], ["initial-token", "rotated-1"])
             self.assertEqual(load_env_file(root / ".env")["PARALLEL_OAUTH_REFRESH_TOKEN"], "rotated-2")
             self.assertEqual(load_env_file(marie / ".env"), {"MARIE_ONLY": "untouched"})
+
+    def test_lost_response_retries_the_same_token_and_recovers(self):
+        """Erro de transporte na troca: repetir o MESMO par recupera o token, sem device flow novo."""
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp) / ".hermes"
+            root.mkdir()
+            (root / ".env").write_text("PARALLEL_OAUTH_CLIENT_ID=client\nPARALLEL_OAUTH_REFRESH_TOKEN=initial\n")
+            sent = []
+
+            def fake_post(url, *, data, **kwargs):
+                sent.append(data["refresh_token"])
+                if len(sent) == 1:
+                    raise httpx.ReadTimeout("resposta perdida no caminho")
+                return Response({"access_token": "access", "refresh_token": "rotated"})
+
+            with patch.dict(os.environ, {"HERMES_HOME": str(root)}), \
+                 patch("hermes_constants._get_platform_default_hermes_home", return_value=root), \
+                 patch.object(providers.httpx, "post", side_effect=fake_post), \
+                 patch.object(providers, "_PARALLEL_RETRY_DELAY_S", 0), \
+                 patch.object(providers.httpx, "get", return_value=Response({"credit_balance_cents": 8534, "will_invoice": False})):
+                snapshot = providers.parallel_snapshot()
+
+            self.assertTrue(snapshot.available, snapshot.unavailable_reason)
+            self.assertEqual(snapshot.details, ("Saldo USD: 85.34",))
+            self.assertEqual(sent, ["initial", "initial"])
+            self.assertEqual(load_env_file(root / ".env")["PARALLEL_OAUTH_REFRESH_TOKEN"], "rotated")
+
+    def test_lost_response_that_was_processed_says_relogin(self):
+        """Se a requisição perdida FOI processada, o retry responde invalid_grant: login expirado."""
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp) / ".hermes"
+            root.mkdir()
+            (root / ".env").write_text("PARALLEL_OAUTH_CLIENT_ID=client\nPARALLEL_OAUTH_REFRESH_TOKEN=initial\n")
+            sent = []
+
+            def fake_post(url, *, data, **kwargs):
+                sent.append(data["refresh_token"])
+                if len(sent) == 1:
+                    raise httpx.ReadTimeout("resposta perdida depois do consumo")
+                return StatusResponse({"error": "invalid_grant"}, 400)
+
+            with patch.dict(os.environ, {"HERMES_HOME": str(root)}), \
+                 patch("hermes_constants._get_platform_default_hermes_home", return_value=root), \
+                 patch.object(providers.httpx, "post", side_effect=fake_post), \
+                 patch.object(providers, "_PARALLEL_RETRY_DELAY_S", 0), \
+                 patch.object(providers.httpx, "get") as get_balance:
+                snapshot = providers.parallel_snapshot()
+
+            self.assertFalse(snapshot.available)
+            self.assertIn("expirado", snapshot.unavailable_reason)
+            self.assertEqual(sent, ["initial", "initial"])
+            get_balance.assert_not_called()
+
+    def test_transport_error_twice_fails_closed_without_touching_env(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp) / ".hermes"
+            root.mkdir()
+            (root / ".env").write_text("PARALLEL_OAUTH_CLIENT_ID=client\nPARALLEL_OAUTH_REFRESH_TOKEN=initial\n")
+            sent = []
+
+            def fake_post(url, *, data, **kwargs):
+                sent.append(data["refresh_token"])
+                raise httpx.ConnectError("rede fora")
+
+            with patch.dict(os.environ, {"HERMES_HOME": str(root)}), \
+                 patch("hermes_constants._get_platform_default_hermes_home", return_value=root), \
+                 patch.object(providers.httpx, "post", side_effect=fake_post), \
+                 patch.object(providers, "_PARALLEL_RETRY_DELAY_S", 0), \
+                 patch.object(providers.httpx, "get") as get_balance:
+                snapshot = providers.parallel_snapshot()
+
+            self.assertFalse(snapshot.available)
+            self.assertIn("indisponível", snapshot.unavailable_reason)
+            self.assertEqual(sent, ["initial", "initial"])
+            self.assertEqual(load_env_file(root / ".env")["PARALLEL_OAUTH_REFRESH_TOKEN"], "initial")
+            get_balance.assert_not_called()
+
+    def test_server_error_is_retried_once_and_recovers(self):
+        """5xx também não é veredito de credencial: uma repetição salva a troca."""
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp) / ".hermes"
+            root.mkdir()
+            (root / ".env").write_text("PARALLEL_OAUTH_CLIENT_ID=client\nPARALLEL_OAUTH_REFRESH_TOKEN=initial\n")
+            sent = []
+
+            def fake_post(url, *, data, **kwargs):
+                sent.append(data["refresh_token"])
+                if len(sent) == 1:
+                    return StatusResponse({}, 502)
+                return Response({"access_token": "access", "refresh_token": "rotated"})
+
+            with patch.dict(os.environ, {"HERMES_HOME": str(root)}), \
+                 patch("hermes_constants._get_platform_default_hermes_home", return_value=root), \
+                 patch.object(providers.httpx, "post", side_effect=fake_post), \
+                 patch.object(providers, "_PARALLEL_RETRY_DELAY_S", 0), \
+                 patch.object(providers.httpx, "get", return_value=Response({"credit_balance_cents": 100, "will_invoice": False})):
+                snapshot = providers.parallel_snapshot()
+
+            self.assertTrue(snapshot.available, snapshot.unavailable_reason)
+            self.assertEqual(sent, ["initial", "initial"])
+
+    def test_4xx_is_not_retried_and_keeps_the_token_for_the_next_cycle(self):
+        """4xx é veredito definitivo (ex.: rate limit): não repete e o token continua no .env."""
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp) / ".hermes"
+            root.mkdir()
+            (root / ".env").write_text("PARALLEL_OAUTH_CLIENT_ID=client\nPARALLEL_OAUTH_REFRESH_TOKEN=initial\n")
+            sent = []
+
+            def fake_post(url, *, data, **kwargs):
+                sent.append(data["refresh_token"])
+                return StatusResponse({"error": "slow_down"}, 429)
+
+            with patch.dict(os.environ, {"HERMES_HOME": str(root)}), \
+                 patch("hermes_constants._get_platform_default_hermes_home", return_value=root), \
+                 patch.object(providers.httpx, "post", side_effect=fake_post), \
+                 patch.object(providers, "_PARALLEL_RETRY_DELAY_S", 0), \
+                 patch.object(providers.httpx, "get") as get_balance:
+                snapshot = providers.parallel_snapshot()
+
+            self.assertFalse(snapshot.available)
+            self.assertIn("HTTP 429", snapshot.unavailable_reason)
+            self.assertEqual(sent, ["initial"])
+            self.assertEqual(load_env_file(root / ".env")["PARALLEL_OAUTH_REFRESH_TOKEN"], "initial")
+            get_balance.assert_not_called()
 
 
 if __name__ == "__main__":

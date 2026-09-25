@@ -8,6 +8,7 @@ from __future__ import annotations
 
 import math
 import os
+import time
 from contextlib import contextmanager
 from datetime import datetime, timezone
 from pathlib import Path
@@ -369,6 +370,48 @@ def _persist_parallel_refresh(refresh_token: str) -> None:
         raise OSError("Parallel refresh token was not persisted")
 
 
+_PARALLEL_REFRESH_ATTEMPTS = 2
+_PARALLEL_RETRY_DELAY_S = 1.0
+
+
+def _parallel_refresh_exchange(refresh_token: str, client_id: str) -> dict:
+    """Troca o refresh token, repetindo UMA vez quando a resposta não é veredito de credencial.
+
+    O par rotaciona: uma resposta perdida (timeout/reset) pode ter sido processada no servidor,
+    consumindo o token. Repetir a MESMA requisição é seguro — se o servidor não processou, o retry
+    recupera o par; se já processou, ele responde ``invalid_grant`` e aí o login morreu de fato.
+    Vale para erro de transporte e para 5xx (nos dois casos não houve veredito); 4xx não se repete,
+    porque é resposta definitiva e o token segue válido para o próximo ciclo do card.
+    """
+    for attempt in range(_PARALLEL_REFRESH_ATTEMPTS):
+        last = attempt + 1 >= _PARALLEL_REFRESH_ATTEMPTS
+        try:
+            response = httpx.post(
+                f"{_PARALLEL_PLATFORM_URL}/getServiceKeys/token",
+                data={
+                    "grant_type": _PARALLEL_REFRESH_GRANT,
+                    "refresh_token": refresh_token,
+                    "client_id": client_id,
+                },
+                headers={"Accept": "application/json"},
+                timeout=15.0,
+            )
+        except httpx.TransportError:
+            if last:
+                raise
+            time.sleep(_PARALLEL_RETRY_DELAY_S)
+            continue
+        try:
+            response.raise_for_status()
+        except httpx.HTTPStatusError as exc:
+            if last or exc.response.status_code < 500:
+                raise
+            time.sleep(_PARALLEL_RETRY_DELAY_S)
+            continue
+        return response.json() or {}
+    raise httpx.TransportError("Parallel: endpoint de token inalcançável")  # pragma: no cover
+
+
 def _parallel_access_token() -> tuple[str, str | None]:
     """Troca o refresh token compartilhado e persiste a rotação sob lock interprocesso."""
     with _parallel_refresh_lock():
@@ -388,18 +431,7 @@ def _parallel_access_token_locked() -> tuple[str, str | None]:
         return "", "sem login Parallel (rode o device flow do usuário Member)"
     client_id = str(secrets.get(_PARALLEL_CLIENT_ID_ENV) or "").strip() or _PARALLEL_FALLBACK_CLIENT_ID
     try:
-        response = httpx.post(
-            f"{_PARALLEL_PLATFORM_URL}/getServiceKeys/token",
-            data={
-                "grant_type": _PARALLEL_REFRESH_GRANT,
-                "refresh_token": refresh_token,
-                "client_id": client_id,
-            },
-            headers={"Accept": "application/json"},
-            timeout=15.0,
-        )
-        response.raise_for_status()
-        payload = response.json() or {}
+        payload = _parallel_refresh_exchange(refresh_token, client_id)
     except httpx.HTTPStatusError as exc:
         if exc.response.status_code in (400, 401, 403):
             return "", "login Parallel expirado — refaça o device flow"
