@@ -3,6 +3,7 @@
 A small native pane for Hermes Desktop showing account quota or balance for:
 
 - ChatGPT / Codex
+- Claude (Pro/Max, OAuth)
 - OpenCode Go
 - DeepSeek
 - OpenRouter
@@ -34,6 +35,10 @@ a backend restart — the FastAPI route is imported once at boot.
 The backend reuses Hermes provider credentials. It never returns credentials to the renderer.
 
 - `openai-codex`: Hermes Codex OAuth/runtime credentials
+- `anthropic`: Claude OAuth login (Hermes pool or borrowed `~/.claude/.credentials.json`, resolved by the
+  core's `resolve_anthropic_token`). The card calls `GET /api/oauth/usage` itself — the core fetcher
+  scales `utilization <= 1` by 100, but the field is already a percent, so 1% used would read as 100%.
+  Only the plan-wide 5h/7d windows are shown; the plan badge comes from `subscriptionType`. An `ANTHROPIC_API_KEY` in env shadows OAuth and makes the card unavailable.
 - `opencode-go`: `OPENCODE_GO_API_KEY`
 - `commandcode`: `COMMANDCODE_API_KEY`
 - `deepseek`: `DEEPSEEK_API_KEY`

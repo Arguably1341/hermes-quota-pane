@@ -1,7 +1,7 @@
 """Provider adapters owned by Quota Pane.
 
 Only Codex and OpenRouter delegate to Hermes' stable account-usage contract.
-OpenCode Go, Command Code, DeepSeek, and Firecrawl stay here so the plugin works
+Claude, OpenCode Go, Command Code, DeepSeek, and Firecrawl stay here so the plugin works
 on stock Hermes and never relies on footer patches.
 """
 from __future__ import annotations
@@ -88,6 +88,73 @@ def _http_reason(exc: Exception, label: str) -> str:
 
 def codex_snapshot() -> AccountUsageSnapshot | None:
     return fetch_account_usage("openai-codex")
+
+
+# Only the two plan-wide windows (5h/7d), same as the ChatGPT card; model-specific weeks
+# (seven_day_opus/sonnet) are left out.
+_ANTHROPIC_WINDOWS = (("five_hour", "5h"), ("seven_day", "7d"))
+_ANTHROPIC_PLANS = {"pro": "Pro", "max": "Max", "team": "Team", "enterprise": "Enterprise"}
+
+
+def _anthropic_plan() -> str | None:
+    """Plan badge from the Claude Code login record (``subscriptionType``, not a secret)."""
+    try:
+        import json
+
+        from agent.anthropic_credentials import claude_code_credentials_path
+
+        data = json.loads(claude_code_credentials_path().read_text(encoding="utf-8"))
+        kind = str((data.get("claudeAiOauth") or {}).get("subscriptionType") or "").strip().lower()
+    except Exception:
+        return None
+    return _ANTHROPIC_PLANS.get(kind, kind.title() or None)
+
+
+def anthropic_snapshot() -> AccountUsageSnapshot:
+    """Claude Pro/Max 5h/7d windows from ``/api/oauth/usage``.
+
+    Fetched here instead of via ``fetch_account_usage("anthropic")``: the core fetcher applies a
+    ``fraction`` heuristic (values <= 1 are scaled x100), but ``utilization`` is already a percent,
+    so 1% used reads as 100% used. Only the token resolver is borrowed from the core.
+    """
+    provider, source = "anthropic", "oauth_usage_api"
+    try:
+        from agent.anthropic_credentials import _is_oauth_token, resolve_anthropic_token
+
+        token = (resolve_anthropic_token() or "").strip()
+    except Exception:
+        token = ""
+    if not token:
+        return _snapshot(provider, source, unavailable_reason="sem login Claude (OAuth)")
+    if not _is_oauth_token(token):
+        return _snapshot(provider, source, unavailable_reason="credencial Anthropic não é OAuth (API key não tem cota de plano)")
+    headers = {
+        "Authorization": f"Bearer {token}",
+        "Accept": "application/json",
+        "anthropic-beta": "oauth-2025-04-20",
+        "User-Agent": "claude-code/2.1.0",
+    }
+    try:
+        response = httpx.get("https://api.anthropic.com/api/oauth/usage", headers=headers, timeout=15.0)
+        response.raise_for_status()
+        payload = response.json() or {}
+    except Exception as exc:
+        return _snapshot(provider, source, unavailable_reason=_http_reason(exc, "API de uso"))
+    windows: list[AccountUsageWindow] = []
+    for key, label in _ANTHROPIC_WINDOWS:
+        item = payload.get(key)
+        used = _number(item.get("utilization")) if isinstance(item, dict) else None
+        if used is None:
+            continue
+        windows.append(AccountUsageWindow(label, max(0.0, min(100.0, used)), _datetime(item.get("resets_at"))))
+    if not windows:
+        return _snapshot(provider, source, unavailable_reason="API sem janelas 5h/7d")
+    details: list[str] = []
+    extra = payload.get("extra_usage") if isinstance(payload.get("extra_usage"), dict) else {}
+    used_credits, limit = _number(extra.get("used_credits")), _number(extra.get("monthly_limit"))
+    if extra.get("is_enabled") and used_credits is not None and limit is not None:
+        details.append(f"Uso extra: {used_credits:.2f} / {limit:.2f} {extra.get('currency') or 'USD'}")
+    return _snapshot(provider, source, windows=windows, details=details, plan=_anthropic_plan())
 
 
 def openrouter_snapshot() -> AccountUsageSnapshot | None:
@@ -491,6 +558,7 @@ def _parallel_snapshot_shared() -> AccountUsageSnapshot:
 # while its plan is exhausted — see DISABLED_PROVIDERS in plugin_api.py.
 FETCHERS: dict[str, Callable[[], AccountUsageSnapshot | None]] = {
     "openai-codex": codex_snapshot,
+    "anthropic": anthropic_snapshot,
     "opencode-go": opencode_go_snapshot,
     "deepseek": deepseek_snapshot,
     "openrouter": openrouter_snapshot,

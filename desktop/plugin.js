@@ -233,7 +233,7 @@ function QuotaPane() {
 export default {
   id: 'quota-pane',
   name: 'Cotas',
-  description: 'Cotas e saldos de ChatGPT / Codex, OpenCode Go, DeepSeek, OpenRouter, Parallel e Firecrawl em um pane nativo.',
+  description: 'Cotas e saldos de ChatGPT / Codex, Claude, OpenCode Go, DeepSeek, OpenRouter, Parallel e Firecrawl em um pane nativo.',
   defaultEnabled: true,
   register(ctx) {
     api = ctx.rest
