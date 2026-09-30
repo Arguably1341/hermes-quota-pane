@@ -14,7 +14,7 @@ OAuth da Anthropic):
 
 Uso, no host do Hermes, como o usuário dono do perfil:
 
-    ~/.hermes/hermes-agent/venv/bin/python \\
+    hermes-python \\
         ~/.hermes/plugins/quota-pane/scripts/parallel_login.py
 
 Autentique no navegador com o usuário Member da organização. O device flow é

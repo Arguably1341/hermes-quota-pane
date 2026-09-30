@@ -53,7 +53,7 @@ Parallel has no API-key path to the balance: `GET /account/service/v1/balance` r
 therefore needs a one-time login, run as a **Member** of the organization:
 
 ```bash
-~/.hermes/hermes-agent/venv/bin/python \
+hermes-python \
     ~/.hermes/plugins/quota-pane/scripts/parallel_login.py
 ```
 
