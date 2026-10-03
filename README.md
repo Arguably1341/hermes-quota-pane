@@ -10,8 +10,9 @@ A small native pane for Hermes Desktop showing account quota or balance for:
 - Parallel
 - Firecrawl
 
-Card order in the pane follows this list. The Command Code card is filtered out while its GOAT plan
-is exhausted — remove the id from `DISABLED_PROVIDERS` in `dashboard/plugin_api.py` to bring it back.
+Card order in the pane follows this list. The Command Code card (GOAT plan exhausted) and the
+OpenCode Go card are filtered out — remove the id from `DISABLED_PROVIDERS` in
+`dashboard/plugin_api.py` to bring either back.
 
 It uses the supported Desktop Plugin SDK and a profile-aware `plugin_api.py` backend. It adds no tools, hooks, prompt content, footer fields, or core patches. Provider failures are isolated; the last good snapshot remains visible briefly while refresh retries run in the background.
 

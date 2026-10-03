@@ -57,11 +57,12 @@ class ParallelSharedTests(unittest.TestCase):
         self.assertEqual(api.PROVIDER_LABELS["parallel"], "Parallel")
         self.assertEqual(
             list(api.ACTIVE_FETCHERS),
-            ["openai-codex", "anthropic", "opencode-go", "deepseek", "openrouter", "parallel", "firecrawl"],
+            ["openai-codex", "anthropic", "deepseek", "openrouter", "parallel", "firecrawl"],
         )
-        self.assertIn("commandcode", api.FETCHERS)
-        self.assertNotIn("commandcode", api.ACTIVE_FETCHERS)
-        self.assertIn("commandcode", api.PROVIDER_LABELS)
+        for disabled in ("commandcode", "opencode-go"):
+            self.assertIn(disabled, api.FETCHERS)
+            self.assertNotIn(disabled, api.ACTIVE_FETCHERS)
+            self.assertIn(disabled, api.PROVIDER_LABELS)
 
     def test_marie_reads_default_balance_and_rotates_only_default_secret(self):
         with tempfile.TemporaryDirectory() as tmp:

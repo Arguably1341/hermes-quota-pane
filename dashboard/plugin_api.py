@@ -25,7 +25,8 @@ FETCHERS = _providers.FETCHERS
 # Cards deliberately kept out of the pane. Command Code's GOAT plan is exhausted and won't be
 # renewed short-term (2026-09): re-enable by removing it from this set — the fetcher and label
 # stay defined, so nothing else changes when the plan comes back.
-DISABLED_PROVIDERS = frozenset({"commandcode"})
+# OpenCode Go hidden on request (2026-10); same rule to re-enable.
+DISABLED_PROVIDERS = frozenset({"commandcode", "opencode-go"})
 ACTIVE_FETCHERS = {name: fetcher for name, fetcher in FETCHERS.items() if name not in DISABLED_PROVIDERS}
 
 router = APIRouter()
