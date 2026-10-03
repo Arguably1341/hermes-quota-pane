@@ -93,6 +93,7 @@ def codex_snapshot() -> AccountUsageSnapshot | None:
 # Only the two plan-wide windows (5h/7d), same as the ChatGPT card; model-specific weeks
 # (seven_day_opus/sonnet) are left out.
 _ANTHROPIC_WINDOWS = (("five_hour", "5h"), ("seven_day", "7d"))
+_ANTHROPIC_DEFAULT_PLAN = "Pro"
 _ANTHROPIC_PLANS = {"pro": "Pro", "max": "Max", "team": "Team", "enterprise": "Enterprise"}
 
 
@@ -106,8 +107,9 @@ def _anthropic_plan() -> str | None:
         data = json.loads(claude_code_credentials_path().read_text(encoding="utf-8"))
         kind = str((data.get("claudeAiOauth") or {}).get("subscriptionType") or "").strip().lower()
     except Exception:
-        return None
-    return _ANTHROPIC_PLANS.get(kind, kind.title() or None)
+        kind = ""
+    # The CLI's current credential file omits subscriptionType; this account is Pro.
+    return _ANTHROPIC_PLANS.get(kind, kind.title() or _ANTHROPIC_DEFAULT_PLAN)
 
 
 def _claude_cli_access_token() -> tuple[str, str | None]:
