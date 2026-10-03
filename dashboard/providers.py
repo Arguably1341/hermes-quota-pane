@@ -110,6 +110,38 @@ def _anthropic_plan() -> str | None:
     return _ANTHROPIC_PLANS.get(kind, kind.title() or None)
 
 
+def _claude_cli_access_token() -> tuple[str, str | None]:
+    """Current access token from the official CLI's credential file, read-only.
+
+    Fallback for setups where Claude runs through the CLI (e.g. the DirectSDK provider) and Hermes
+    neither pools the login nor adopts it (``auth.adopt_external_logins: false``). Never refreshes:
+    refresh tokens are single-use, so rotating here would log the CLI out. An expired token is
+    reported as such; the CLI renews it on its next run. Returns ``(token, reason_if_unusable)``.
+    """
+    import json
+
+    try:
+        from agent.anthropic_credentials import claude_code_credentials_path
+
+        path = claude_code_credentials_path()
+    except Exception:
+        override = os.environ.get("CLAUDE_CONFIG_DIR", "").strip()
+        path = (Path(override).expanduser() if override else Path.home() / ".claude") / ".credentials.json"
+    try:
+        record = json.loads(path.read_text(encoding="utf-8")).get("claudeAiOauth") or {}
+    except FileNotFoundError:
+        return "", None
+    except Exception:
+        return "", "credencial do Claude CLI ilegível"
+    token = str(record.get("accessToken") or "").strip()
+    if not token:
+        return "", None
+    expires_at = _number(record.get("expiresAt"))
+    if expires_at and time.time() * 1000 >= expires_at - 60_000:
+        return "", "token do Claude CLI expirado (renova no próximo uso do claude)"
+    return token, None
+
+
 def anthropic_snapshot() -> AccountUsageSnapshot:
     """Claude Pro/Max 5h/7d windows from ``/api/oauth/usage``.
 
@@ -124,9 +156,13 @@ def anthropic_snapshot() -> AccountUsageSnapshot:
         token = (resolve_anthropic_token() or "").strip()
     except Exception:
         token = ""
+        _is_oauth_token = None
     if not token:
-        return _snapshot(provider, source, unavailable_reason="sem login Claude (OAuth)")
-    if not _is_oauth_token(token):
+        token, reason = _claude_cli_access_token()
+        if not token:
+            return _snapshot(provider, source, unavailable_reason=reason or "sem login Claude (OAuth)")
+        source = "oauth_usage_api_cli"
+    if _is_oauth_token is not None and not _is_oauth_token(token):
         return _snapshot(provider, source, unavailable_reason="credencial Anthropic não é OAuth (API key não tem cota de plano)")
     headers = {
         "Authorization": f"Bearer {token}",

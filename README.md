@@ -38,6 +38,10 @@ The backend reuses Hermes provider credentials. It never returns credentials to 
 - `anthropic`: Claude OAuth login (Hermes pool or borrowed `~/.claude/.credentials.json`, resolved by the
   core's `resolve_anthropic_token`). The card calls `GET /api/oauth/usage` itself — the core fetcher
   scales `utilization <= 1` by 100, but the field is already a percent, so 1% used would read as 100%.
+  When Hermes has no Anthropic login of its own (e.g. Claude via the DirectSDK provider with
+  `auth.adopt_external_logins: false`), the card falls back to the official CLI's current access
+  token, read-only: it never refreshes (single-use refresh tokens would log the CLI out), so an
+  expired token shows as unavailable until the next `claude` run renews it.
   Only the plan-wide 5h/7d windows are shown; the plan badge comes from `subscriptionType`. An `ANTHROPIC_API_KEY` in env shadows OAuth and makes the card unavailable.
 - `opencode-go`: `OPENCODE_GO_API_KEY`
 - `commandcode`: `COMMANDCODE_API_KEY`
