@@ -1,6 +1,6 @@
 name: quota-pane
-version: 1.4.0
-description: Native Hermes Desktop quota pane for ChatGPT/Codex, Claude, OpenCode Go, DeepSeek, OpenRouter, Parallel, and Firecrawl.
+version: 1.5.0
+description: Native Hermes Desktop quota pane for ChatGPT/Codex, Claude, Antigravity, OpenCode Go, DeepSeek, OpenRouter, Parallel, and Firecrawl.
 author: Arguably1341
 kind: standalone
 license: MIT

@@ -4,6 +4,7 @@ A small native pane for Hermes Desktop showing account quota or balance for:
 
 - ChatGPT / Codex
 - Claude (Pro/Max, OAuth)
+- Antigravity (Gemini and Claude/GPT groups, 5h + 7d each)
 - OpenCode Go
 - DeepSeek
 - OpenRouter
@@ -44,6 +45,12 @@ The backend reuses Hermes provider credentials. It never returns credentials to 
   token, read-only: it never refreshes (single-use refresh tokens would log the CLI out), so an
   expired token shows as unavailable until the next `claude` run renews it.
   Only the plan-wide 5h/7d windows are shown; the plan badge comes from `subscriptionType`. An `ANTHROPIC_API_KEY` in env shadows OAuth and makes the card unavailable.
+- `antigravity`: the official Antigravity CLI (`agy`) and its own Google login under
+  `~/.gemini/antigravity-cli/`. The card runs `agy -p /quota --output-format json --log-file /dev/null`
+  — a slash command only (no model turn, no tokens, no conversation) — and maps the `Gemini Models`
+  and `Claude and GPT models` groups to four bars: `Gemini 5h/7d`, `Claude 5h/7d`
+  (`used = 1 − remaining_fraction`). The plugin never reads or refreshes the OAuth token; the CLI does.
+  No token file = unavailable without spawning (the CLI would block on the browser login).
 - `opencode-go`: `OPENCODE_GO_API_KEY`
 - `commandcode`: `COMMANDCODE_API_KEY`
 - `deepseek`: `DEEPSEEK_API_KEY`

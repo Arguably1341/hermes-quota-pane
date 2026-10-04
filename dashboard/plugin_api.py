@@ -34,6 +34,7 @@ router = APIRouter()
 PROVIDER_LABELS = {
     "openai-codex": "ChatGPT / Codex",
     "anthropic": "Claude",
+    "antigravity": "Antigravity",
     "opencode-go": "OpenCode Go",
     "commandcode": "Command Code",
     "deepseek": "DeepSeek",

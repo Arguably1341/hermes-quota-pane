@@ -57,7 +57,7 @@ class ParallelSharedTests(unittest.TestCase):
         self.assertEqual(api.PROVIDER_LABELS["parallel"], "Parallel")
         self.assertEqual(
             list(api.ACTIVE_FETCHERS),
-            ["openai-codex", "anthropic", "deepseek", "openrouter", "parallel", "firecrawl"],
+            ["openai-codex", "anthropic", "antigravity", "deepseek", "openrouter", "parallel", "firecrawl"],
         )
         for disabled in ("commandcode", "opencode-go"):
             self.assertIn(disabled, api.FETCHERS)

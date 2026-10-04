@@ -195,6 +195,101 @@ def anthropic_snapshot() -> AccountUsageSnapshot:
     return _snapshot(provider, source, windows=windows, details=details, plan=_anthropic_plan())
 
 
+# ---- Antigravity (CLI ``agy``, slash command /quota) -------------------------------
+#
+# The quota lives in a private Code Assist route (``v1internal:retrieveUserQuotaSummary``) behind
+# the CLI's Google OAuth. Instead of re-implementing that client (embedded client secret, token
+# refresh, undocumented request shape), the card asks the official CLI: ``agy -p /quota
+# --output-format json`` runs only the slash command — no model turn, no conversation, zero tokens —
+# and returns structured groups/buckets. The CLI owns its token and refreshes it itself.
+# ``--log-file /dev/null`` keeps each poll from leaving a ~15 KB log under ~/.gemini.
+
+_ANTIGRAVITY_GROUPS = ((("gemini",), "Gemini"), (("claude", "gpt", "3p"), "Claude"))
+_ANTIGRAVITY_WINDOWS = ((("5h", "five"), "5h"), (("weekly", "7d", "week"), "7d"))
+_ANTIGRAVITY_TIMEOUT_S = 25.0
+
+
+def _antigravity_binary() -> str | None:
+    import shutil
+
+    found = shutil.which("agy")
+    if found:
+        return found
+    fallback = Path.home() / ".local" / "bin" / "agy"
+    return str(fallback) if fallback.exists() else None
+
+
+def _antigravity_match(text: str, table) -> str | None:
+    lowered = text.lower()
+    for needles, label in table:
+        if any(needle in lowered for needle in needles):
+            return label
+    return None
+
+
+def antigravity_snapshot() -> AccountUsageSnapshot:
+    """Gemini and Claude/GPT groups, each with a 5h and a weekly bucket (4 bars)."""
+    import json
+    import subprocess
+
+    provider, source = "antigravity", "agy_quota_command"
+    binary = _antigravity_binary()
+    if not binary:
+        return _snapshot(provider, source, unavailable_reason="CLI agy não instalado")
+    # Without a login the CLI blocks waiting for the browser OAuth; don't spawn it at all.
+    if not (Path.home() / ".gemini" / "antigravity-cli" / "antigravity-oauth-token").exists():
+        return _snapshot(provider, source, unavailable_reason="sem login Antigravity (rode agy para entrar)")
+    try:
+        result = subprocess.run(
+            [binary, "-p", "/quota", "--output-format", "json", "--log-file", os.devnull],
+            stdin=subprocess.DEVNULL,
+            capture_output=True,
+            text=True,
+            timeout=_ANTIGRAVITY_TIMEOUT_S,
+            cwd=str(Path.home()),
+        )
+    except subprocess.TimeoutExpired:
+        return _snapshot(provider, source, unavailable_reason="CLI agy não respondeu (login expirado?)")
+    except Exception:
+        return _snapshot(provider, source, unavailable_reason="CLI agy falhou ao iniciar")
+    output = result.stdout or ""
+    if "Authentication required" in output:
+        return _snapshot(provider, source, unavailable_reason="login Antigravity expirado (rode agy para entrar)")
+    try:
+        payload = json.loads(output[output.index("{"):])
+    except (ValueError, TypeError):
+        return _snapshot(provider, source, unavailable_reason=f"CLI agy sem resposta JSON (exit {result.returncode})")
+    data = ((payload.get("command") or {}).get("data") or {}) if isinstance(payload, dict) else {}
+    groups = data.get("groups") if isinstance(data, dict) else None
+    if not isinstance(groups, list):
+        return _snapshot(provider, source, unavailable_reason="comando /quota sem grupos de cota")
+
+    found: dict[tuple[str, str], AccountUsageWindow] = {}
+    for group in groups:
+        if not isinstance(group, dict):
+            continue
+        group_label = _antigravity_match(str(group.get("name") or ""), _ANTIGRAVITY_GROUPS)
+        for bucket in group.get("buckets") or ():
+            if not isinstance(bucket, dict):
+                continue
+            if group_label is None:
+                group_label = _antigravity_match(str(bucket.get("id") or ""), _ANTIGRAVITY_GROUPS)
+            window_label = _antigravity_match(str(bucket.get("window") or bucket.get("id") or ""), _ANTIGRAVITY_WINDOWS)
+            remaining = _number(bucket.get("remaining_fraction"))
+            if group_label is None or window_label is None or remaining is None:
+                continue
+            # remaining_fraction is a 0..1 fraction (1 = untouched), unlike Anthropic's percent.
+            used = max(0.0, min(100.0, (1.0 - remaining) * 100.0))
+            found[(group_label, window_label)] = AccountUsageWindow(
+                f"{group_label} {window_label}", used, _datetime(bucket.get("reset_time"))
+            )
+    order = [(group, window) for _, group in _ANTIGRAVITY_GROUPS for _, window in _ANTIGRAVITY_WINDOWS]
+    windows = [found[key] for key in order if key in found]
+    if not windows:
+        return _snapshot(provider, source, unavailable_reason="comando /quota sem janelas 5h/7d")
+    return _snapshot(provider, source, windows=windows)
+
+
 def openrouter_snapshot() -> AccountUsageSnapshot | None:
     return fetch_account_usage("openrouter")
 
@@ -597,6 +692,7 @@ def _parallel_snapshot_shared() -> AccountUsageSnapshot:
 FETCHERS: dict[str, Callable[[], AccountUsageSnapshot | None]] = {
     "openai-codex": codex_snapshot,
     "anthropic": anthropic_snapshot,
+    "antigravity": antigravity_snapshot,
     "opencode-go": opencode_go_snapshot,
     "deepseek": deepseek_snapshot,
     "openrouter": openrouter_snapshot,
