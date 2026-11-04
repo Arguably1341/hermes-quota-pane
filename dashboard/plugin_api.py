@@ -26,7 +26,8 @@ FETCHERS = _providers.FETCHERS
 # renewed short-term (2026-09): re-enable by removing it from this set — the fetcher and label
 # stay defined, so nothing else changes when the plan comes back.
 # OpenCode Go hidden on request (2026-10); same rule to re-enable.
-DISABLED_PROVIDERS = frozenset({"commandcode", "opencode-go"})
+# ChatGPT / Codex hidden on request by Eduardo (2026-10-10); same rule to re-enable.
+DISABLED_PROVIDERS = frozenset({"commandcode", "opencode-go", "openai-codex"})
 ACTIVE_FETCHERS = {name: fetcher for name, fetcher in FETCHERS.items() if name not in DISABLED_PROVIDERS}
 
 router = APIRouter()
