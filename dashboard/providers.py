@@ -204,7 +204,18 @@ def anthropic_snapshot() -> AccountUsageSnapshot:
 # and returns structured groups/buckets. The CLI owns its token and refreshes it itself.
 # ``--log-file /dev/null`` keeps each poll from leaving a ~15 KB log under ~/.gemini.
 
-_ANTIGRAVITY_GROUPS = ((("gemini",), "Gemini"), (("claude", "gpt", "3p"), "Claude"))
+# Each agy group is a SEPARATE quota pool. Paid Pro plans report "Gemini 4 Argon" next to
+# "Gemini Models" (Flash/Pro), with a weekly bucket only. Matching any name that merely contains
+# "gemini" folded both onto one label, so Argon's weekly overwrote the Flash/Pro 7d bar while the
+# 5h bar kept showing the untouched Flash/Pro pool. Match the specific pool first (table order
+# matters) and never let two groups share a label.
+_ANTIGRAVITY_GROUPS = (
+    (("argon",), "Argon"),
+    (("gemini",), "Gemini"),
+    (("claude", "gpt", "3p"), "Claude"),
+)
+# Card order: the main Gemini pool, then the separate Argon pool, then Claude/GPT.
+_ANTIGRAVITY_CARD_ORDER = ("Gemini", "Argon", "Claude")
 _ANTIGRAVITY_WINDOWS = ((("5h", "five"), "5h"), (("weekly", "7d", "week"), "7d"))
 _ANTIGRAVITY_TIMEOUT_S = 25.0
 
@@ -228,7 +239,7 @@ def _antigravity_match(text: str, table) -> str | None:
 
 
 def antigravity_snapshot() -> AccountUsageSnapshot:
-    """Gemini and Claude/GPT groups, each with a 5h and a weekly bucket (4 bars)."""
+    """One bar per (pool, window): Gemini 5h/7d, Argon 7d (paid Pro), Claude 5h/7d."""
     import json
     import subprocess
 
@@ -280,10 +291,11 @@ def antigravity_snapshot() -> AccountUsageSnapshot:
                 continue
             # remaining_fraction is a 0..1 fraction (1 = untouched), unlike Anthropic's percent.
             used = max(0.0, min(100.0, (1.0 - remaining) * 100.0))
-            found[(group_label, window_label)] = AccountUsageWindow(
+            # setdefault: a later bucket must never silently replace one already mapped.
+            found.setdefault((group_label, window_label), AccountUsageWindow(
                 f"{group_label} {window_label}", used, _datetime(bucket.get("reset_time"))
-            )
-    order = [(group, window) for _, group in _ANTIGRAVITY_GROUPS for _, window in _ANTIGRAVITY_WINDOWS]
+            ))
+    order = [(group, window) for group in _ANTIGRAVITY_CARD_ORDER for _, window in _ANTIGRAVITY_WINDOWS]
     windows = [found[key] for key in order if key in found]
     if not windows:
         return _snapshot(provider, source, unavailable_reason="comando /quota sem janelas 5h/7d")

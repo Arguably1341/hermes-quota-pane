@@ -1,4 +1,4 @@
-"""Antigravity card: 4 bars (Gemini/Claude x 5h/7d) parsed from ``agy -p /quota --output-format json``."""
+"""Antigravity card: one bar per quota pool and window, parsed from ``agy -p /quota --output-format json``."""
 from __future__ import annotations
 
 import importlib.util
@@ -59,6 +59,19 @@ class AntigravityCardTests(unittest.TestCase):
         args = run.call_args.args[0]
         self.assertEqual(args[1:5], ["-p", "/quota", "--output-format", "json"])
         self.assertIn("--log-file", args)
+
+    def test_argon_pool_never_overwrites_the_gemini_bars(self):
+        # Real shape on a paid Pro plan (agy, 2026-11-04): Argon is a third, weekly-only pool.
+        payload = json.loads(json.dumps(PAYLOAD))
+        payload["command"]["data"]["groups"].append({"name": "Gemini 4 Argon", "buckets": [
+            {"id": "gemini-argon-wtu-weekly", "window": "weekly", "remaining_fraction": 0.6629,
+             "reset_time": "2026-10-10T18:54:53Z"},
+        ]})
+        snap, _ = self._run(json.dumps(payload))
+        self.assertEqual(
+            [(w.label, round(w.used_percent, 2)) for w in snap.windows],
+            [("Gemini 5h", 5.74), ("Gemini 7d", 1.42), ("Argon 7d", 33.71), ("Claude 5h", 50.0), ("Claude 7d", 0.0)],
+        )
 
     def test_no_login_does_not_spawn_the_cli(self):
         snap, run = self._run(logged_in=False)

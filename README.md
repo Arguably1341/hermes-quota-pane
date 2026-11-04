@@ -4,7 +4,7 @@ A small native pane for Hermes Desktop showing account quota or balance for:
 
 - ChatGPT / Codex
 - Claude (Pro/Max, OAuth)
-- Antigravity (Gemini and Claude/GPT groups, 5h + 7d each)
+- Antigravity (Gemini, Argon and Claude/GPT pools)
 - OpenCode Go
 - DeepSeek
 - OpenRouter
@@ -47,9 +47,11 @@ The backend reuses Hermes provider credentials. It never returns credentials to 
   Only the plan-wide 5h/7d windows are shown; the plan badge comes from `subscriptionType`. An `ANTHROPIC_API_KEY` in env shadows OAuth and makes the card unavailable.
 - `antigravity`: the official Antigravity CLI (`agy`) and its own Google login under
   `~/.gemini/antigravity-cli/`. The card runs `agy -p /quota --output-format json --log-file /dev/null`
-  — a slash command only (no model turn, no tokens, no conversation) — and maps the `Gemini Models`
-  and `Claude and GPT models` groups to four bars: `Gemini 5h/7d`, `Claude 5h/7d`
-  (`used = 1 − remaining_fraction`). The plugin never reads or refreshes the OAuth token; the CLI does.
+  — a slash command only (no model turn, no tokens, no conversation) — and maps each quota pool to
+  its own bars: `Gemini 5h/7d` (`Gemini Models`: Flash/Pro), `Argon 7d` (`Gemini 4 Argon`, a separate
+  weekly-only pool on paid Pro plans) and `Claude 5h/7d` (`Claude and GPT models`)
+  (`used = 1 − remaining_fraction`). Pools are never merged: matching on the bare word "gemini" once
+  let Argon's weekly overwrite the Flash/Pro 7d bar. The plugin never reads or refreshes the OAuth token; the CLI does.
   No token file = unavailable without spawning (the CLI would block on the browser login).
 - `opencode-go`: `OPENCODE_GO_API_KEY`
 - `commandcode`: `COMMANDCODE_API_KEY`
