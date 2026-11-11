@@ -442,7 +442,7 @@ def firecrawl_snapshot() -> AccountUsageSnapshot:
                 label="Ciclo",
                 used_percent=used,
                 reset_at=reset_at,
-                detail=f"{remaining:.0f} de {plan:.0f} créditos",
+                detail=f"{remaining:.0f} créditos disponíveis",
             )],
         )
     except Exception as exc:
